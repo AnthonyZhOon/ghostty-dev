@@ -92,21 +92,21 @@ pub const Mods = packed struct(Mods.Backing) {
     caps_lock: bool = false,
     num_lock: bool = false,
     sides: side = .{},
-    _padding: u6 = 0,
+    _padding: u2 = 0,
 
     /// Tracks the side that is active for any given modifier. Note
     /// that this doesn't confirm a modifier is pressed; you must check
     /// the bool for that in addition to this.
     ///
     /// Not all platforms support this, check apprt for more info.
-    pub const side = packed struct(u4) {
-        shift: Side = .left,
-        ctrl: Side = .left,
-        alt: Side = .left,
-        super: Side = .left,
+    pub const side = packed struct(u8) {
+        shift: Side = .either,
+        ctrl: Side = .either,
+        alt: Side = .either,
+        super: Side = .either,
     };
 
-    pub const Side = enum(u1) { left, right };
+    pub const Side = enum(u2) { either = 0b00, left = 0b10, right = 0b11 };
 
     /// Integer value of this struct.
     pub fn int(self: Mods) Backing {
@@ -130,6 +130,7 @@ pub const Mods = packed struct(Mods.Backing) {
             .ctrl = self.ctrl,
             .alt = self.alt,
             .super = self.super,
+            .sides = self.sides,
         };
     }
 

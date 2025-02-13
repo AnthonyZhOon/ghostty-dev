@@ -129,10 +129,17 @@ pub const Event = struct {
             _ = cimgui.c.igTableSetColumnIndex(0);
             cimgui.c.igText("Mods");
             _ = cimgui.c.igTableSetColumnIndex(1);
-            if (self.event.mods.shift) cimgui.c.igText("shift ");
-            if (self.event.mods.ctrl) cimgui.c.igText("ctrl ");
-            if (self.event.mods.alt) cimgui.c.igText("alt ");
-            if (self.event.mods.super) cimgui.c.igText("super ");
+            const mods = [_][]const u8{ "shift", "ctrl", "alt", "super" };
+            inline for (mods) |mod| {
+                if (@field(self.event.mods, mod)) {
+                    const side = switch (@field(self.event.mods.sides, mod)) {
+                        .left => "left",
+                        .right => "right",
+                        .either => "",
+                    };
+                    cimgui.c.igText("%s " ++ mod ++ " ", side.ptr);
+                }
+            }
         }
         if (self.event.composing) {
             cimgui.c.igTableNextRow(cimgui.c.ImGuiTableRowFlags_None, 0);

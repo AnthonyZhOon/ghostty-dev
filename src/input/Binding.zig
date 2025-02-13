@@ -123,6 +123,11 @@ pub const Parser = struct {
             if (self.flags.global or self.flags.all) return error.InvalidFormat;
             return .{ .leader = trigger };
         }
+        // Error if only modifiers but no pressed key was set
+        switch (trigger.key) {
+            .physical, .translated => |k| if (k == .invalid) return error.InvalidFormat,
+            else => {},
+        }
 
         // Out of triggers, yield the final action.
         return .{ .binding = .{
@@ -1092,6 +1097,35 @@ pub const Trigger = struct {
                 }
             }
 
+            // Sided modifiers
+            //TODO: Consider interaction between aliased modifiers and sided
+            // Currently we only detect sided-modifiers based on physical keys
+            const left_keys = [_]key.Key{
+                .left_shift,
+                .left_control,
+                .left_alt,
+                .left_super,
+            };
+            const right_keys = [_]key.Key{
+                .right_shift,
+                .right_control,
+                .right_alt,
+                .right_super,
+            };
+            // FIXME: How can I improve this? I just wrote something straightforward
+            const side_fields = [_][]const u8{ "shift", "ctrl", "alt", "super" };
+            inline for (.{ .left, .right }, .{ left_keys, right_keys }) |side, keys| {
+                inline for (keys, 0..) |key_field, idx| {
+                    if (std.mem.eql(u8, part, @tagName(key_field))) {
+                        if (@field(result.mods, side_fields[idx])) return Error.InvalidFormat;
+                        @field(result.mods, side_fields[idx]) = true;
+                        @field(result.mods.sides, side_fields[idx]) = side;
+                        // TODO: Are we going to allow singular left_control as a valid trigger key?
+                        // This change currently disallows it;
+                        continue :loop;
+                    }
+                }
+            }
             // If the key starts with "physical" then this is an physical key.
             const physical_prefix = "physical:";
             const physical = std.mem.startsWith(u8, part, physical_prefix);
@@ -1801,6 +1835,9 @@ test "parse: triggers" {
 
     // multiple character
     try testing.expectError(Error.InvalidFormat, parseSingle("a+b=ignore"));
+
+    // only modifiers
+    try testing.expectError(Error.InvalidFormat, parseSingle("ctrl=ignore"));
 }
 
 test "parse: global triggers" {
