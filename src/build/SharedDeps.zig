@@ -232,7 +232,7 @@ pub fn add(
     })) |glslang_dep| {
         step.root_module.addImport("glslang", glslang_dep.module("glslang"));
         if (b.systemIntegrationOption("glslang", .{})) {
-            step.linkSystemLibrary2("glslang", dynamic_link_opts);
+            step.linkSystemLibrary2("glslang", .{ .preferred_link_mode = .static, .search_strategy = dynamic_link_opts.search_strategy });
             step.linkSystemLibrary2(
                 "glslang-default-resource-limits",
                 dynamic_link_opts,
