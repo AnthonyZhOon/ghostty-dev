@@ -27,6 +27,7 @@ pub const Inspector = struct {
     vt_stream: widgets.termio.Stream,
     renderer_info: widgets.renderer.Info,
     show_demo_window: bool,
+    frame_times: widgets.renderer.FrameTimes,
 
     pub fn init(alloc: Allocator) !Inspector {
         return .{
@@ -36,6 +37,7 @@ pub const Inspector = struct {
             .vt_stream = try .init(alloc),
             .renderer_info = .empty,
             .show_demo_window = true,
+            .frame_times = try .init(alloc),
         };
     }
 
@@ -43,6 +45,7 @@ pub const Inspector = struct {
         self.key_stream.deinit(alloc);
         self.vt_stream.deinit(alloc);
         self.renderer_info.deinit(alloc);
+        self.frame_times.deinit(alloc);
     }
 
     pub fn draw(
@@ -127,6 +130,9 @@ pub const Inspector = struct {
                 defer cimgui.c.ImGui_End();
                 self.renderer_info.draw(
                     surface.alloc,
+                    open,
+                );
+                self.frame_times.draw(
                     open,
                 );
             }
