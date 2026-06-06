@@ -109,6 +109,14 @@ pub fn recordPtyRead(
     );
 }
 
+/// Record a frame time in nanoseconds.
+pub fn recordFrameTime(
+    self: *Inspector,
+    frame_time: inspector.FrameEvent,
+) void {
+    self.gui.frame_times.recordFrameTime(frame_time);
+}
+
 /// Render the frame.
 pub fn render(
     self: *Inspector,
@@ -125,5 +133,7 @@ pub fn render(
     // state. This is KIND OF expensive (wasted CPU if nothing was done)
     // but the inspector is a development tool and it expressly costs
     // more resources while open so its okay.
-    surface.renderer_thread.wakeup.notify() catch {};
+    if (self.rendererInfo().features.count() > 0) {
+        surface.renderer_thread.wakeup.notify() catch {};
+    }
 }

@@ -3,9 +3,85 @@ const Allocator = std.mem.Allocator;
 const cimgui = @import("dcimgui");
 const widgets = @import("../widgets.zig");
 const renderer = @import("../../renderer.zig");
+const CircBuf = @import("../../datastruct/circ_buf.zig").CircBuf;
 
 const log = std.log.scoped(.inspector_renderer);
 
+pub const FrameEvent = struct {
+    start: std.time.Instant,
+    end: std.time.Instant, // In nanoseconds
+
+    pub fn frameTimeMs(self: *const FrameEvent) f32 {
+        return @as(f32, @floatFromInt(self.end.since(self.start))) / 1e6; // Convert to ms
+    }
+};
+fn FrameRing(comptime capacity: usize) type {
+    return struct {
+        const Self = @This();
+        frames: CircBuf(FrameEvent, undefined),
+
+        pub fn init(alloc: Allocator) !Self {
+            return .{
+                .frames = try .init(alloc, capacity),
+            };
+        }
+
+        pub fn deinit(self: *Self, alloc: Allocator) void {
+            self.frames.deinit(alloc);
+        }
+
+        pub fn recordFrameTime(
+            self: *Self,
+            frame_time: FrameEvent,
+        ) void {
+            if (self.frames.full) {
+                self.frames.deleteOldest(1);
+            }
+            self.frames.append(frame_time) catch {
+                log.err("Failed to record frame time", .{});
+            };
+        }
+
+        pub fn draw(
+            self: *Self,
+            open: bool,
+        ) void {
+            if (!open) return;
+            const len = self.frames.len();
+            if (len == 0) {
+                cimgui.c.ImGui_Text("No frame times recorded yet.");
+                return;
+            }
+            const slice = self.frames.getPtrSlice(0, len);
+            var data: [capacity]f32 = undefined;
+            // Milliseconds won't overflow, probably
+            var sum: f32 = 0.0;
+            for (slice[0], 0..) |frame, i| {
+                const ms = frame.frameTimeMs();
+                sum += ms;
+                data[i] = ms;
+            }
+            for (slice[1], slice[0].len..) |frame, i| {
+                const ms = frame.frameTimeMs();
+                sum += ms;
+                data[i] = ms;
+            }
+
+            cimgui.c.ImGui_SeparatorText("Performance");
+            cimgui.c.ImGui_PlotLines("Frame Times", @ptrCast(&data), @intCast(len));
+            const len_f32: f32 = @floatFromInt(len);
+            const avg_frame_time = sum / len_f32;
+            const duration_ns: f32 = @floatFromInt(self.frames.last().?.end.since(self.frames.first().?.start));
+            const buffer_duration_ms: f32 = duration_ns / 1e6;
+            const avg_fps = 1000 * len_f32 / buffer_duration_ms;
+            cimgui.c.ImGui_Text("Average Frame Time: %3g ms", avg_frame_time);
+            cimgui.c.ImGui_Text("Last Frame Time: %3g ms", self.frames.last().?.frameTimeMs());
+            cimgui.c.ImGui_Text("FPS: %3g", avg_fps);
+            return;
+        }
+    };
+}
+pub const FrameTimes = FrameRing(256);
 /// Renderer information inspector widget.
 pub const Info = struct {
     features: std.AutoArrayHashMapUnmanaged(

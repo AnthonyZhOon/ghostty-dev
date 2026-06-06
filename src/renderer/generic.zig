@@ -8,6 +8,7 @@ const configpkg = @import("../config.zig");
 const font = @import("../font/main.zig");
 const inputpkg = @import("../input.zig");
 const os = @import("../os/main.zig");
+const Inspector = @import("../inspector/main.zig").Inspector;
 const terminal = @import("../terminal/main.zig");
 const renderer = @import("../renderer.zig");
 const math = @import("../math.zig");
@@ -97,6 +98,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
         /// Allocator that can be used
         alloc: std.mem.Allocator,
+
+        /// Inspector weak reference
+        inspector: ?*Inspector = null,
 
         /// This mutex must be held whenever any state used in `drawFrame` is
         /// being modified, and also when it's being accessed in `drawFrame`.
@@ -235,6 +239,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
         /// Our overlay state, if any.
         overlay: ?Overlay = null,
+
+        /// The previous Instant where a frame was forced to screen.
+        /// Updated when frameCompleted() is called after the API finishes a frame draw.
+        prev_frame_completed_at: ?std.time.Instant = null,
 
         const HighlightTag = enum(u8) {
             search_match,
@@ -824,6 +832,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             self.api.deinit();
 
+            self.inspector = null;
+
             self.* = undefined;
         }
 
@@ -1192,6 +1202,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
                 state.lockDemand(global.io());
                 defer state.unlockDemand(global.io());
+
+                self.inspector = state.inspector;
 
                 // If we're in a synchronized output state, we pause all rendering.
                 if (state.terminal.modes.get(.synchronized_output)) {
@@ -1743,6 +1755,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             self: *Self,
             health: Health,
         ) void {
+            if (self.inspector) |inspector| {
+                const end = std.time.Instant.now() catch unreachable;
+                if (self.prev_frame_completed_at) |prev_frame_completed_at| {
+                    inspector.recordFrameTime(.{ .start = prev_frame_completed_at, .end = end });
+                }
+                self.prev_frame_completed_at = end;
+            }
             // If our health value hasn't changed, then we do nothing. We don't
             // do a cmpxchg here because strict atomicity isn't important.
             if (self.health.load(.seq_cst) != health) {
