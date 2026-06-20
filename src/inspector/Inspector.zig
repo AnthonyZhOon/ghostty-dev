@@ -117,6 +117,25 @@ pub fn recordFrameTime(
     self.gui.frame_times.recordFrameTime(frame_time);
 }
 
+/// Record a frame timing instant
+/// .input_time -> when input processing starts from key, mouse or pty events
+/// .frame_start -> draw start
+/// .cpu_end -> when cpu work ends and before gpu wait starts
+/// .frame_end -> when the frame is presented
+pub fn recordFrameTiming(
+    self: *Inspector,
+    comptime field: inspector.FrameTiming.RecordableFields,
+    instant: std.time.Instant,
+) void {
+    self.gui.frame_times.record(field, instant);
+}
+
+pub fn commitFrameTiming(
+    self: *Inspector,
+) void {
+    self.gui.frame_times.commitRecord();
+}
+
 /// Render the frame.
 pub fn render(
     self: *Inspector,

@@ -1260,6 +1260,9 @@ pub const Surface = extern struct {
         keycode: c_uint,
         gtk_mods: gdk.ModifierType,
     ) bool {
+        if (self.core().?.inspector) |inspector| {
+            inspector.recordFrameTiming(.input_time, std.time.Instant.now() catch unreachable);
+        }
         //log.warn("keyEvent action={}", .{action});
         const event = ec_key.as(gtk.EventController).getCurrentEvent() orelse return false;
         const key_event = gobject.ext.cast(gdk.KeyEvent, event) orelse return false;

@@ -1471,7 +1471,20 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             self: *Self,
             sync: bool,
         ) !void {
-            // We hold a the draw mutex to prevent changes to any
+            if (self.inspector) |insp| {
+                insp.recordFrameTiming(.frame_start, std.time.Instant.now() catch unreachable);
+            }
+
+            // const start = std.time.Instant.now() catch unreachable;
+            // const start_micro = std.time.microTimestamp();
+            // defer {
+            //     const end = std.time.Instant.now() catch unreachable;
+            //     log.warn(
+            //         "[drawFrame time] start_micro={} duration={}ns",
+            //         .{ start_micro, end.since(start) / std.time.ns_per_us },
+            //     );
+            // }
+
             // data we access while we're in the middle of drawing.
             self.draw_mutex.lockUncancelable(global.io());
             defer self.draw_mutex.unlock(global.io());
@@ -1617,7 +1630,12 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             // Get a frame context from the graphics API.
             var frame_ctx = try self.api.beginFrame(self, &frame.target);
-            defer frame_ctx.complete(sync);
+            defer {
+                if (self.inspector) |insp| {
+                    insp.recordFrameTiming(.cpu_end, std.time.Instant.now() catch unreachable);
+                }
+                frame_ctx.complete(sync);
+            }
 
             {
                 var pass = frame_ctx.renderPass(&.{.{
@@ -1761,6 +1779,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     inspector.recordFrameTime(.{ .start = prev_frame_completed_at, .end = end });
                 }
                 self.prev_frame_completed_at = end;
+                inspector.recordFrameTiming(.frame_end, end);
+                inspector.commitFrameTiming();
             }
             // If our health value hasn't changed, then we do nothing. We don't
             // do a cmpxchg here because strict atomicity isn't important.
