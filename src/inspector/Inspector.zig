@@ -109,14 +109,6 @@ pub fn recordPtyRead(
     );
 }
 
-/// Record a frame time in nanoseconds.
-pub fn recordFrameTime(
-    self: *Inspector,
-    frame_time: inspector.FrameEvent,
-) void {
-    self.gui.frame_times.recordFrameTime(frame_time);
-}
-
 /// Record a frame timing instant
 /// .input_time -> when input processing starts from key, mouse or pty events
 /// .frame_start -> draw start
@@ -125,7 +117,7 @@ pub fn recordFrameTime(
 pub fn recordFrameTiming(
     self: *Inspector,
     comptime field: inspector.FrameTiming.RecordableFields,
-    instant: std.time.Instant,
+    instant: std.Io.Timestamp,
 ) void {
     self.gui.frame_times.record(field, instant);
 }

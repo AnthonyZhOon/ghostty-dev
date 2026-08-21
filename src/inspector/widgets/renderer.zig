@@ -8,29 +8,29 @@ const CircBuf = @import("../../datastruct/circ_buf.zig").CircBuf;
 const log = std.log.scoped(.inspector_renderer);
 
 pub const FrameEvent = struct {
-    start: std.time.Instant,
-    end: std.time.Instant, // In nanoseconds
+    start: std.Io.Timestamp,
+    end: std.Io.Timestamp, // In nanoseconds
 
     pub fn frameTimeMs(self: *const FrameEvent) f32 {
-        return @as(f32, @floatFromInt(self.end.since(self.start))) / 1e6; // Convert to ms
+        return @as(f32, @floatFromInt(self.start.durationTo(self.end).toMilliseconds())); // Convert to ms
     }
 };
 
 pub const FrameTiming = struct {
     pub const RecordableFields = std.meta.FieldEnum(std.meta.FieldEnum(struct {
-        input_time: ?std.time.Instant,
-        frame_start: ?std.time.Instant,
-        cpu_end: ?std.time.Instant,
-        frame_end: ?std.time.Instant,
+        input_time: ?std.Io.Timestamp,
+        frame_start: ?std.Io.Timestamp,
+        cpu_end: ?std.Io.Timestamp,
+        frame_end: ?std.Io.Timestamp,
     }));
     pub const Uncommitted = struct {
-        input_time: ?std.time.Instant = null,
-        prev_end: ?std.time.Instant = null,
-        frame_start: ?std.time.Instant = null,
-        cpu_end: ?std.time.Instant = null,
-        frame_end: ?std.time.Instant = null,
+        input_time: ?std.Io.Timestamp = null,
+        prev_end: ?std.Io.Timestamp = null,
+        frame_start: ?std.Io.Timestamp = null,
+        cpu_end: ?std.Io.Timestamp = null,
+        frame_end: ?std.Io.Timestamp = null,
 
-        pub fn record(self: *FrameTiming.Uncommitted, comptime field: RecordableFields, instant: std.time.Instant) void {
+        pub fn record(self: *FrameTiming.Uncommitted, comptime field: RecordableFields, instant: std.Io.Timestamp) void {
             if (@field(self, @tagName(field)) != null) {
                 std.debug.panic("Field {s} already recorded in {any}", .{ @tagName(field), self });
             }
@@ -49,41 +49,41 @@ pub const FrameTiming = struct {
     };
 
     pub const Committed = struct {
-        input_time: ?std.time.Instant = null,
-        prev_end: std.time.Instant,
-        frame_start: std.time.Instant,
-        cpu_end: std.time.Instant,
-        frame_end: std.time.Instant,
+        input_time: ?std.Io.Timestamp = null,
+        prev_end: std.Io.Timestamp,
+        frame_start: std.Io.Timestamp,
+        cpu_end: std.Io.Timestamp,
+        frame_end: std.Io.Timestamp,
         pub fn inputLatencyMs(self: *const Committed) ?f32 {
             if (self.input_time) |input| {
-                return @as(f32, @floatFromInt(self.frame_start.since(input))) / 1e6;
+                return @as(f32, @floatFromInt(input.durationTo(self.frame_start).toMilliseconds()));
             } else {
                 return null;
             }
         }
         /// Total wall time including idle, from prev frame end to this frame end.
         pub fn totalRenderTimeMs(self: *const Committed) f32 {
-            return @as(f32, @floatFromInt(self.frame_end.since(self.prev_end))) / 1e6;
+            return @as(f32, @floatFromInt(self.prev_end.durationTo(self.frame_end).toMilliseconds()));
         }
 
         /// Idle time waiting between frames.
         pub fn preRenderTimeMs(self: *const Committed) f32 {
-            return @as(f32, @floatFromInt(self.frame_start.since(self.prev_end))) / 1e6;
+            return @as(f32, @floatFromInt(self.prev_end.durationTo(self.frame_start).toMilliseconds()));
         }
 
         /// Active render time: CPU + GPU.
         pub fn activeTimeMs(self: *const Committed) f32 {
-            return @as(f32, @floatFromInt(self.frame_end.since(self.frame_start))) / 1e6;
+            return @as(f32, @floatFromInt(self.frame_start.durationTo(self.frame_end).toMilliseconds()));
         }
 
         /// CPU render time only.
         pub fn cpuFrameTimeMs(self: *const Committed) f32 {
-            return @as(f32, @floatFromInt(self.cpu_end.since(self.frame_start))) / 1e6;
+            return @as(f32, @floatFromInt(self.frame_start.durationTo(self.cpu_end).toMilliseconds()));
         }
 
         /// GPU render wait time only.
         pub fn gpuWaitTimeMs(self: *const Committed) f32 {
-            return @as(f32, @floatFromInt(self.frame_end.since(self.cpu_end))) / 1e6;
+            return @as(f32, @floatFromInt(self.cpu_end.durationTo(self.frame_end).toMilliseconds()));
         }
     };
 };
@@ -91,23 +91,20 @@ pub const FrameTiming = struct {
 fn FrameHistory(comptime capacity: usize) type {
     return struct {
         const Self = @This();
-        frames: CircBuf(FrameEvent, undefined),
-        frames_: CircBuf(FrameTiming.Committed, undefined),
+        frames: CircBuf(FrameTiming.Committed, undefined),
         uncommitted_frame: FrameTiming.Uncommitted = .{},
 
         pub fn init(alloc: Allocator) !Self {
             return .{
                 .frames = try .init(alloc, capacity),
-                .frames_ = try .init(alloc, capacity),
             };
         }
 
         pub fn deinit(self: *Self, alloc: Allocator) void {
             self.frames.deinit(alloc);
-            self.frames_.deinit(alloc);
         }
 
-        pub fn record(self: *Self, comptime field: FrameTiming.RecordableFields, instant: std.time.Instant) void {
+        pub fn record(self: *Self, comptime field: FrameTiming.RecordableFields, instant: std.Io.Timestamp) void {
             log.debug("Recording frame timing: {s} at {any}", .{ @tagName(field), self.uncommitted_frame });
             self.uncommitted_frame.record(field, instant);
         }
@@ -116,35 +113,23 @@ fn FrameHistory(comptime capacity: usize) type {
             const uncomitted = self.uncommitted_frame;
             if (uncomitted.commit()) |commit_frame| {
                 self.uncommitted_frame = .{ .prev_end = commit_frame.frame_end };
-                if (self.frames_.full) {
-                    self.frames_.deleteOldest(1);
+                if (self.frames.full) {
+                    self.frames.deleteOldest(1);
                 }
-                self.frames_.appendAssumeCapacity(commit_frame);
+                self.frames.appendAssumeCapacity(commit_frame);
             } else {
                 self.uncommitted_frame = .{ .prev_end = self.uncommitted_frame.frame_end };
             }
         }
 
-        pub fn recordFrameTime(
-            self: *Self,
-            frame_time: FrameEvent,
-        ) void {
-            if (self.frames.full) {
-                self.frames.deleteOldest(1);
-            }
-            self.frames.append(frame_time) catch {
-                log.err("Failed to record frame time", .{});
-            };
-        }
-
-        pub fn draw_(self: *Self, open: bool) void {
+        pub fn draw(self: *Self, open: bool) void {
             if (!open) return;
-            const len = self.frames_.len();
+            const len = self.frames.len();
             if (len == 0) {
                 cimgui.c.ImGui_Text("No frame times recorded yet.");
                 return;
             }
-            const slice = self.frames_.getPtrSlice(0, len);
+            const slice = self.frames.getPtrSlice(0, len);
             var data: [capacity]f32 = undefined;
             var sum_total: f32 = 0.0;
             var sum_active: f32 = 0.0;
@@ -169,7 +154,7 @@ fn FrameHistory(comptime capacity: usize) type {
             }
 
             const len_f32: f32 = @floatFromInt(len);
-            const duration_ns: f32 = @floatFromInt(self.frames_.last().?.frame_end.since(self.frames_.first().?.frame_start));
+            const duration_ns: f32 = @floatFromInt(self.frames.first().?.frame_start.durationTo(self.frames.last().?.frame_end).toNanoseconds());
             const avg_fps = 1e9 * (len_f32 - 1.0) / duration_ns;
 
             cimgui.c.ImGui_SeparatorText("Performance");
@@ -180,52 +165,12 @@ fn FrameHistory(comptime capacity: usize) type {
             cimgui.c.ImGui_Text("Average Active (CPU+GPU) Time: %3g ms", sum_active / len_f32);
             cimgui.c.ImGui_Text("Average CPU Time: %3g ms", sum_cpu / len_f32);
             cimgui.c.ImGui_Text("Average GPU Wait Time: %3g ms", sum_cpu / len_f32);
-            cimgui.c.ImGui_Text("Last Total Frame Time: %3g ms", self.frames_.last().?.totalRenderTimeMs());
-            cimgui.c.ImGui_Text("Last Idle Time: %3g ms", self.frames_.last().?.preRenderTimeMs());
-            cimgui.c.ImGui_Text("Last Active Time: %3g ms", self.frames_.last().?.activeTimeMs());
-            cimgui.c.ImGui_Text("Last CPU Time: %3g ms", self.frames_.last().?.cpuFrameTimeMs());
-            cimgui.c.ImGui_Text("Last GPU Wait Time: %3g ms", self.frames_.last().?.gpuWaitTimeMs());
-            cimgui.c.ImGui_Text("Last Input Latency: %3g ms", self.frames_.last().?.inputLatencyMs() orelse 0.0);
-        }
-
-        pub fn draw(
-            self: *Self,
-            open: bool,
-        ) void {
-            if (!open) return;
-            const len = self.frames.len();
-            if (len == 0) {
-                cimgui.c.ImGui_Text("No frame times recorded yet.");
-                return;
-            }
-            const slice = self.frames.getPtrSlice(0, len);
-            var data: [capacity]f32 = undefined;
-            // Milliseconds won't overflow, probably
-            var sum: f32 = 0.0;
-            for (slice[0], 0..) |frame, i| {
-                const ms = frame.frameTimeMs();
-                sum += ms;
-                data[i] = ms;
-            }
-            for (slice[1], slice[0].len..) |frame, i| {
-                const ms = frame.frameTimeMs();
-                sum += ms;
-                data[i] = ms;
-            }
-
-            cimgui.c.ImGui_SeparatorText("Performance");
-            cimgui.c.ImGui_PlotLines("Frame Times", @ptrCast(&data), @intCast(len));
-            const len_f32: f32 = @floatFromInt(len);
-            const avg_frame_time = sum / len_f32;
-            const duration_ns: f32 = @floatFromInt(self.frames.last().?.end.since(self.frames.first().?.start));
-            const buffer_duration_ms: f32 = duration_ns / 1e6;
-            const avg_fps = 1000 * len_f32 / buffer_duration_ms;
-            cimgui.c.ImGui_Text("Average Frame Time: %3g ms", avg_frame_time);
-            cimgui.c.ImGui_Text("Last Frame Time: %3g ms", self.frames.last().?.frameTimeMs());
-            cimgui.c.ImGui_Text("FPS: %3g", avg_fps);
-
-            self.draw_(open);
-            return;
+            cimgui.c.ImGui_Text("Last Total Frame Time: %3g ms", self.frames.last().?.totalRenderTimeMs());
+            cimgui.c.ImGui_Text("Last Idle Time: %3g ms", self.frames.last().?.preRenderTimeMs());
+            cimgui.c.ImGui_Text("Last Active Time: %3g ms", self.frames.last().?.activeTimeMs());
+            cimgui.c.ImGui_Text("Last CPU Time: %3g ms", self.frames.last().?.cpuFrameTimeMs());
+            cimgui.c.ImGui_Text("Last GPU Wait Time: %3g ms", self.frames.last().?.gpuWaitTimeMs());
+            cimgui.c.ImGui_Text("Last Input Latency: %3g ms", self.frames.last().?.inputLatencyMs() orelse 0.0);
         }
     };
 }

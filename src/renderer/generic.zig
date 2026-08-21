@@ -1573,7 +1573,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             sync: bool,
         ) !void {
             if (self.inspector) |insp| {
-                insp.recordFrameTiming(.frame_start, std.time.Instant.now() catch unreachable);
+                insp.recordFrameTiming(.frame_start, std.Io.Timestamp.now(global.io(), .awake));
             }
 
             // const start = std.time.Instant.now() catch unreachable;
@@ -1736,7 +1736,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             var frame_ctx = try self.api.beginFrame(self, &frame.target);
             defer {
                 if (self.inspector) |insp| {
-                    insp.recordFrameTiming(.cpu_end, std.time.Instant.now() catch unreachable);
+                    insp.recordFrameTiming(.cpu_end, std.Io.Timestamp.now(global.io(), .awake));
                 }
                 frame_ctx.complete(sync);
             }
@@ -1878,11 +1878,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             health: Health,
         ) void {
             if (self.inspector) |inspector| {
-                const end = std.time.Instant.now() catch unreachable;
-                if (self.prev_frame_completed_at) |prev_frame_completed_at| {
-                    inspector.recordFrameTime(.{ .start = prev_frame_completed_at, .end = end });
-                }
-                self.prev_frame_completed_at = end;
+                const end = std.Io.Timestamp.now(global.io(), .awake);
                 inspector.recordFrameTiming(.frame_end, end);
                 inspector.commitFrameTiming();
             }
