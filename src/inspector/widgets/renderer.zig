@@ -32,7 +32,8 @@ pub const FrameTiming = struct {
 
         pub fn record(self: *FrameTiming.Uncommitted, comptime field: RecordableFields, instant: std.Io.Timestamp) void {
             if (@field(self, @tagName(field)) != null) {
-                std.debug.panic("Field {s} already recorded in {any}", .{ @tagName(field), self });
+                log.info("Field {s} already recorded in {any}, ignoring", .{ @tagName(field), self });
+                return;
             }
             @field(self, @tagName(field)) = instant;
         }
