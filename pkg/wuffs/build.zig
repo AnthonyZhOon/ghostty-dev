@@ -96,6 +96,23 @@ pub fn build(b: *std.Build) !void {
         });
 
         module.addImport("wuffs_c", wuffs_c.mod);
+
+        // Standalone Kitty zlib decompression microbenchmarks.
+        const bench_step = b.step("bench", "Build Kitty zlib decompression benchmarks");
+        inline for (.{ "zig", "wuffs" }) |name| {
+            const exe = b.addExecutable(.{
+                .name = "kitty-zlib-" ++ name,
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("bench/" ++ name ++ ".zig"),
+                    .target = target,
+                    .optimize = optimize,
+                }),
+            });
+            exe.root_module.addImport("wuffs_c", wuffs_c.mod);
+            exe.root_module.link_libc = true;
+            const install_exe = b.addInstallArtifact(exe, .{});
+            bench_step.dependOn(&install_exe.step);
+        }
     }
 
     if (b.lazyDependency("pixels", .{})) |pixels_dep| {
