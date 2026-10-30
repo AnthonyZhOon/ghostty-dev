@@ -414,7 +414,9 @@ pub fn initAtlasTexture(
     const format: gl.Texture.Format, const internal_format: gl.Texture.InternalFormat =
         switch (atlas.format) {
             .grayscale => .{ .red, .red },
-            .bgra => .{ .bgra, .srgba },
+            // FreeType premultiplies in sRGB. The shader must unpremultiply
+            // before decoding, so do not let the texture sampler decode it.
+            .bgra => .{ .bgra, .rgba },
             else => @panic("unsupported atlas format for OpenGL texture"),
         };
 
