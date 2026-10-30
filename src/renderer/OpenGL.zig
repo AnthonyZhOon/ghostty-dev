@@ -448,3 +448,7 @@ pub inline fn beginFrame(
     _ = self;
     return try Frame.begin(.{}, renderer, target);
 }
+
+test {
+    _ = @import("opengl/test.zig");
+}
