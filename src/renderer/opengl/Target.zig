@@ -11,11 +11,10 @@
 //!     native blending. The attachment format controls automatic sRGB
 //!     decoding/encoding while `GL_FRAMEBUFFER_SRGB` is enabled.
 //!
-//!   - `export_texture`: `GL_RGBA8`. This is the texture we actually export
-//!     as a dma-buf. Mesa cannot export `GL_SRGB8_ALPHA8` textures to
-//!     dma-buf, so we blit the rendered sRGB texture into this plain RGBA8
-//!     texture (the blit copies the already-sRGB-encoded pixel values
-//!     verbatim) and export that instead.
+//!   - `export_texture`: `GL_RGBA8`, containing sRGB-premultiplied bytes for
+//!     both DMA-BUF and CPU presentation. A shader converts the render
+//!     target's linear-premultiplied colors to this representation; a raw
+//!     copy would encode alpha as part of RGB and produce bright fringes.
 const Self = @This();
 
 const std = @import("std");
@@ -23,6 +22,7 @@ const Allocator = std.mem.Allocator;
 const gl = @import("opengl");
 const egl = gl.egl;
 const Dmabuf = @import("../Dmabuf.zig");
+const shaders = @import("shaders.zig");
 
 const log = std.log.scoped(.opengl);
 
@@ -42,11 +42,11 @@ framebuffer: gl.Framebuffer,
 /// The color attachment texture we render to, in the blending color space.
 texture: gl.Texture,
 
-/// A plain RGBA8 texture + framebuffer that we blit `texture` into for
-/// dma-buf export. Mesa can't export sRGB textures, so we blit the
-/// already-sRGB-encoded pixels into this non-sRGB texture and export it.
+/// A plain RGBA8 texture containing sRGB-premultiplied presentation pixels.
 export_texture: gl.Texture,
 export_framebuffer: gl.Framebuffer,
+export_program: gl.Program,
+export_vao: gl.VertexArray,
 
 /// Current width of this target.
 width: usize,
@@ -129,11 +129,26 @@ pub fn init(opts: Options) !Self {
         }
     }
 
+    const export_program = try gl.Program.createVF(
+        shaders.loadShaderCode("../shaders/glsl/full_screen.v.glsl"),
+        shaders.loadShaderCode("../shaders/glsl/present.f.glsl"),
+    );
+    errdefer export_program.destroy();
+    {
+        const binding = try export_program.use();
+        defer binding.unbind();
+        try export_program.setUniform("linear_blending", opts.linear);
+    }
+    const export_vao = try gl.VertexArray.create();
+    errdefer export_vao.destroy();
+
     return .{
         .framebuffer = fbo,
         .texture = texture,
         .export_framebuffer = export_fbo,
         .export_texture = export_texture,
+        .export_program = export_program,
+        .export_vao = export_vao,
         .width = opts.width,
         .height = opts.height,
     };
@@ -144,6 +159,25 @@ pub fn deinit(self: *Self) void {
     self.texture.destroy();
     self.export_framebuffer.destroy();
     self.export_texture.destroy();
+    self.export_program.destroy();
+    self.export_vao.destroy();
+}
+
+/// Prepare pixels for either presentation path. Subsequent render passes set
+/// their own blending state and viewport before drawing into a target again.
+fn prepareExport(self: *const Self) !void {
+    const draw_bind = try self.export_framebuffer.bind(.draw);
+    defer draw_bind.unbind();
+    const program_bind = try self.export_program.use();
+    defer program_bind.unbind();
+    const vao_bind = try self.export_vao.bind();
+    defer vao_bind.unbind();
+    try gl.Texture.active(0);
+    const texture_bind = try self.texture.bind(.@"2d");
+    defer texture_bind.unbind();
+    try gl.viewport(0, 0, @intCast(self.width), @intCast(self.height));
+    try gl.disable(gl.c.GL_BLEND);
+    try gl.drawArraysInstanced(.triangle, 0, 3, 1);
 }
 
 pub fn exportDmabuf(
@@ -151,34 +185,7 @@ pub fn exportDmabuf(
     display: *egl.Display,
     context: *egl.Context,
 ) !Dmabuf {
-    // We disable GL_FRAMEBUFFER_SRGB while doing this blit, otherwise
-    // the values may be linearized as they're copied, but even though
-    // the draw framebuffer has a linear internal format, the values in
-    // it should be sRGB, not linear!
-    try gl.disable(gl.c.GL_FRAMEBUFFER_SRGB);
-    defer gl.enable(gl.c.GL_FRAMEBUFFER_SRGB) catch |err| {
-        log.err("Error re-enabling GL_FRAMEBUFFER_SRGB, err={}", .{err});
-    };
-
-    const read_bind = try self.framebuffer.bind(.read);
-    defer read_bind.unbind();
-
-    const draw_bind = try self.export_framebuffer.bind(.draw);
-    defer draw_bind.unbind();
-
-    try gl.blitFramebuffer(
-        0,
-        0,
-        @intCast(self.width),
-        @intCast(self.height),
-        0,
-        0,
-        @intCast(self.width),
-        @intCast(self.height),
-        .{ .color_buffer_bit = true },
-        .nearest,
-    );
-
+    try self.prepareExport();
     const image: *egl.Image = try .create(
         display,
         context,
@@ -215,15 +222,14 @@ pub fn exportDmabuf(
     };
 }
 
-/// Read the current contents of the framebuffer into CPU memory.
+/// Read the presentation pixels into CPU memory.
 ///
 /// This is used by the CPU readback presentation fallback. The
 /// returned data is tightly-packed RGBA8 with premultiplied alpha,
-/// i.e. `width * 4` bytes per row, containing sRGB-encoded values:
-/// `GL_FRAMEBUFFER_SRGB` has no effect on `ReadPixels`, so the stored
-/// values are returned verbatim.
+/// i.e. `width * 4` bytes per row, premultiplied in sRGB just like DMA-BUF.
 pub fn readPixelsAlloc(self: *const Self, alloc: std.mem.Allocator) ![]u8 {
-    const bind = try self.framebuffer.bind(.read);
+    try self.prepareExport();
+    const bind = try self.export_framebuffer.bind(.read);
     defer bind.unbind();
 
     const pixels = try alloc.alloc(u8, self.width * self.height * 4);

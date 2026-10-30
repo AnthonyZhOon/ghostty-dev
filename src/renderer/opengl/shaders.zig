@@ -344,7 +344,7 @@ fn initPostPipeline(data: [:0]const u8) !Pipeline {
 /// assumptions about things being well formed and file names not containing
 /// quote marks. If we ever want to process `#include`s for custom shaders
 /// then we need to write something better than this for it.
-fn loadShaderCode(comptime path: []const u8) [:0]const u8 {
+pub fn loadShaderCode(comptime path: []const u8) [:0]const u8 {
     return comptime processIncludes(@embedFile(path), std.fs.path.dirname(path).?);
 }
 
