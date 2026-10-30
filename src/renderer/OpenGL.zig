@@ -263,10 +263,10 @@ pub fn initShaders(
 
 /// Initialize a new render target which can be presented by this API.
 pub fn initTarget(self: *const OpenGL, width: usize, height: usize) !Target {
-    _ = self;
     return Target.init(.{
         .width = width,
         .height = height,
+        .linear = self.blending.isLinear(),
     });
 }
 
@@ -341,10 +341,9 @@ pub const bgImageBufferOptions = bufferOptions;
 
 /// Returns the options to use when constructing textures.
 pub inline fn textureOptions(self: OpenGL) Texture.Options {
-    _ = self;
     return .{
         .format = .rgba,
-        .internal_format = .srgba,
+        .internal_format = if (self.blending.isLinear()) .srgba else .rgba,
         .target = .@"2d",
         .min_filter = .linear,
         .mag_filter = .linear,
